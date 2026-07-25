@@ -1,4 +1,4 @@
-const { test, expect } = require("@playwright/test");
+import { test, expect } from "@playwright/test";
 
 test("desktop reader supports word, syntax, language, translation, search, and notes", async ({ page }) => {
   const consoleErrors = [];
