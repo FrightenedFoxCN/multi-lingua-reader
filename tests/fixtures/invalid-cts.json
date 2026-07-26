@@ -1,0 +1,29 @@
+{
+  "format": "Lingua CTS Annotation Bundle",
+  "profile": "lingua-cts-annotations/1.0",
+  "cts": {
+    "passageUrn": "urn:cts:latinLit:demo.work.edition:1.1"
+  },
+  "language": "latin",
+  "text": "arma cano",
+  "annotations": [
+    {
+      "id": "a1",
+      "target": "urn:cts:latinLit:demo.work.edition:1.1@arma[1]",
+      "form": "arma",
+      "syntax": {
+        "head": null,
+        "dependency": "root"
+      }
+    },
+    {
+      "id": "a2",
+      "target": "urn:cts:latinLit:demo.work.edition:1.1@arma[1]",
+      "form": "cano",
+      "syntax": {
+        "head": "urn:cts:latinLit:demo.work.edition:1.1@missing[1]",
+        "dependency": "dep"
+      }
+    }
+  ]
+}
