@@ -9,7 +9,7 @@
     "postbuild": "node scripts/prepare-sites-build.mjs",
     "start": "vinext start",
     "lint": "vinext lint",
-    "test:unit": "node --test tests/lgr.test.js tests/language-profile.test.js tests/language-resources.test.js tests/cts-validation.test.js tests/material-store.test.js tests/dictionary-store.test.js tests/library-store.test.js tests/local-database.test.js tests/model-config.test.js tests/dictionary-import.test.js tests/analyze.test.js tests/analyze-model.test.js tests/analysis-engines.test.js tests/analysis-dsl.test.js tests/analysis-dsl-reference.test.js tests/corpus-store.test.js tests/site-config.test.js",
+    "test:unit": "node --test tests/lgr.test.js tests/language-profile.test.js tests/language-resources.test.js tests/cts-validation.test.js tests/material-store.test.js tests/dictionary-store.test.js tests/library-store.test.js tests/local-database.test.js tests/model-config.test.js tests/lexicon-config.test.js tests/lexicon-client.test.js tests/dictionary-import.test.js tests/analyze.test.js tests/analyze-model.test.js tests/analysis-engines.test.js tests/analysis-dsl.test.js tests/analysis-dsl-reference.test.js tests/corpus-store.test.js tests/site-config.test.js",
     "test:stress:logic": "node --test tests/stress.test.js",
     "test:stress:browser": "playwright test tests/stress.spec.js",
     "test:stress": "npm run test:stress:logic && npm run test:stress:browser",

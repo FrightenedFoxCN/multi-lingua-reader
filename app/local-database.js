@@ -28,6 +28,7 @@ const LOCAL_STORAGE_KEYS = [
   "lingua-reader-state-v2",
   "lingua-language-workspace-v1",
   "lingua-model-config-v1",
+  "lingua-lexicon-sources-v1",
 ];
 
 function downloadName() {

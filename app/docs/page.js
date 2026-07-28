@@ -88,7 +88,38 @@ export default function DocumentationPage() {
                 <div><dt>逐行复制</dt><dd>行号旁的复制按钮只复制原文，不混入词法标签或译文。</dd></div>
                 <div><dt>CTS 定位</dt><dd>分享链接包含段落 URN 与词位，例如 <code>urn:cts:…:1.1@form[1]</code>。</dd></div>
                 <div><dt>分析本段</dt><dd>把可见段落、CTS URN 与现有标注带入分析实验室，校订后可返回阅读器。</dd></div>
+                <div><dt>在线词典与发音</dt><dd>在右上角设置中添加查询地址、适用语言与密钥方式，并用测试词确认结果。多个来源按顺序合并；IPA、录音播放器和来源入口直接显示在词项详情中。</dd></div>
               </dl>
+              <p className="docs-note">查询地址支持 <code>{"{term}"}</code>、<code>{"{lemma}"}</code>、<code>{"{language}"}</code> 与 <code>{"{code}"}</code>。常见的 <code>definitions</code>、<code>gloss</code>、<code>ipa</code>、<code>phonetics</code>、<code>audio</code> 字段会自动整理；地址与顺序随本地数据库导出，接口密钥只保留在当前浏览器会话。</p>
+
+              <h3>配置一个在线词典</h3>
+              <ol>
+                <li>打开右上角设置，进入“在线词典与发音”，点击“添加在线词典”。</li>
+                <li>填写词典名称、适用语言和 GET 查询地址。适用语言可写 <code>*</code>，也可用逗号列出 BCP 47 代码，例如 <code>en, la, grc</code>。</li>
+                <li>如接口需要授权，选择 Bearer、自定义请求头或查询参数；密钥名称与密钥分别填写。</li>
+                <li>输入测试词和语言代码并点击“测试接口”。确认释义与发音数量后保存；上下箭头决定查询和合并顺序。</li>
+              </ol>
+
+              <h3>兼容的返回格式</h3>
+              <p>接口可以直接返回下列通用结构，也可以使用常见的 <code>definition</code>、<code>gloss</code>、<code>meanings</code>、<code>phonetic</code> 或 <code>audioUrl</code> 别名。数组形式的公共词典响应同样可以识别。</p>
+              <pre><code>{`{
+  "term": "amō",
+  "lemma": "amō",
+  "sourceUrl": "https://dictionary.example/amo",
+  "license": "CC BY-SA",
+  "ipa": ["/ˈa.moː/"],
+  "pronunciations": [{
+    "url": "https://media.example/amo.mp3",
+    "type": "audio/mpeg",
+    "provider": "Example Dictionary",
+    "sourceUrl": "https://dictionary.example/amo"
+  }],
+  "entries": [{
+    "partOfSpeech": "verb",
+    "definitions": ["to love"]
+  }]
+}`}</code></pre>
+              <p className="docs-note">多个来源同时成功时，词义按设置顺序合并，IPA 与录音按地址去重；一个来源超时或报错不会阻断其他词典。单次批量分析最多向每个来源发送 24 个词项，响应上限为 2 MB。</p>
             </section>
 
             <section id="language">

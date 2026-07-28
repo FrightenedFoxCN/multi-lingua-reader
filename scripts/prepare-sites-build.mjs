@@ -11,5 +11,7 @@ if (!existsSync(serverEntry)) {
   throw new Error("vinext build did not produce dist/server/index.js");
 }
 
-mkdirSync(targetMetadataDir, { recursive: true });
-copyFileSync(sourceMetadata, targetMetadata);
+if (existsSync(sourceMetadata)) {
+  mkdirSync(targetMetadataDir, { recursive: true });
+  copyFileSync(sourceMetadata, targetMetadata);
+}

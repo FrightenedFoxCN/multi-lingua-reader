@@ -48,6 +48,25 @@ import {
   validateModelConfig,
 } from "./model-config";
 import {
+  LEXICON_CONFIG_STORAGE_KEY,
+  LEXICON_SECRET_SESSION_KEY,
+  builtInLexiconSource,
+  freshCustomLexiconSource,
+  normalizeLexiconSources,
+  persistentLexiconSources,
+  sourceSupportsLanguage,
+  validateLexiconSource,
+} from "./lexicon-config";
+import {
+  compactLexiconRecord,
+  enrichTokenWithLexicon,
+  lexiconDefinitions,
+  lexiconMorphologyCandidates,
+  lexiconSourceLabel,
+  requestLexiconBatch,
+  useLexiconLookup,
+} from "./lexicon-client";
+import {
   analysisEngineDescriptor,
   enabledAnalysisEngines,
   moveAnalysisEngine,
@@ -613,105 +632,6 @@ function readerLineText(line, languageId, languageProfile) {
     .join(compact ? "" : " ");
 }
 
-function useWiktionaryLookup(token, languageId, enabled = true, languageProfile = null) {
-  const [result, setResult] = useState({ status: "idle", entries: [] });
-  const customCode = languageProfile?.code || "";
-  const supportedLanguage = ["greek", "latin", "chinese"].includes(languageId)
-    || (Boolean(customCode) && !customCode.startsWith("x-"));
-  const tokenId = token?.id;
-  const term = token?.form || "";
-  const lemma = token?.lemma || term;
-  const embedded = token?.lexicon;
-  const embeddedMatches = embedded
-    && (!embedded.term || embedded.term === term)
-    && (!embedded.lemma || embedded.lemma === lemma);
-  const embeddedComplete = embeddedMatches && embedded.detailsLoaded;
-
-  useEffect(() => {
-    if (!enabled || embeddedComplete) return undefined;
-    if (!tokenId || !term || !supportedLanguage) {
-      setResult({ status: "idle", entries: [] });
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    setResult({ status: "loading", entries: [], term, lemma, tokenId });
-    const parameters = new URLSearchParams({
-      language: languageId,
-      term,
-      lemma,
-      ...(customCode ? { code: customCode } : {}),
-    });
-    fetch(`/api/lexicon?${parameters}`, { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Lexicon request failed with ${response.status}`);
-        return response.json();
-      })
-      .then((payload) => setResult({ ...payload, tokenId }))
-      .catch((error) => {
-        if (error.name !== "AbortError") {
-          setResult({
-            status: "unavailable",
-            entries: [],
-            tokenId,
-            message: "Wiktionary 暂时不可用，已显示本地词法结果。",
-          });
-        }
-      });
-
-    return () => controller.abort();
-  }, [customCode, embeddedComplete, enabled, languageId, lemma, supportedLanguage, term, tokenId]);
-
-  if (embeddedComplete) return { status: "ok", tokenId, term, lemma, ...embedded };
-  if (
-    embeddedMatches
-    && (result.tokenId !== tokenId || result.status === "loading" || result.status === "idle")
-  ) {
-    return { status: "ok", tokenId, term, lemma, ...embedded };
-  }
-  if (tokenId && !supportedLanguage) {
-    return { status: "not_configured", entries: [], term, lemma, tokenId };
-  }
-  if (!enabled && tokenId) return { status: "loading", entries: [], term, lemma, tokenId };
-  if (tokenId && result.tokenId !== tokenId) {
-    return { status: "loading", entries: [], term, lemma, tokenId };
-  }
-  return result;
-}
-
-function wiktionaryDefinitions(result, limit = 3) {
-  return [...new Set(
-    (result?.entries || []).flatMap((entry) => entry.definitions || []).filter(Boolean),
-  )].slice(0, limit);
-}
-
-function wiktionaryMorphologyCandidates(result) {
-  const candidates = (result?.entries || []).flatMap((entry) => entry.morphologyCandidates || []);
-  return candidates.filter((candidate, index) => (
-    candidates.findIndex((item) => item.lgrTags.join(".") === candidate.lgrTags.join(".")) === index
-  ));
-}
-
-function compactLexiconRecord(result) {
-  if (result?.status !== "ok") return null;
-  return {
-    source: "Wiktionary",
-    sourceWiki: result.sourceWiki,
-    sourceLanguage: result.sourceLanguage,
-    sourceUrl: result.sourceUrl,
-    license: result.license,
-    term: result.term,
-    lemma: result.lemma,
-    ipa: result.ipa || [],
-    pronunciations: result.pronunciations || [],
-    detailsLoaded: Boolean(result.detailsLoaded),
-    paradigms: result.paradigms || [],
-    fixedExpressions: result.fixedExpressions || [],
-    relatedTerms: result.relatedTerms || [],
-    entries: result.entries,
-  };
-}
-
 function compactCjkExpression(value) {
   const source = String(value || "").replace(/\s+/gu, " ").trim();
   if (!/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(source)) return source;
@@ -779,63 +699,6 @@ function relevantGrammarRules(profile, token, limit = 5) {
         - (rightIndex < 0 ? categoryOrder.length : rightIndex);
     })
     .slice(0, limit);
-}
-
-const wiktionaryPartOfSpeech = {
-  adjective: "形容词",
-  adverb: "副词",
-  article: "冠词",
-  conjunction: "连词",
-  interjection: "感叹词",
-  noun: "名词",
-  numeral: "数词",
-  particle: "小品词",
-  preposition: "介词",
-  pronoun: "代词",
-  verb: "动词",
-  動詞: "动词",
-  名詞: "名词",
-  形容詞: "形容词",
-  副詞: "副词",
-  代詞: "代词",
-  介詞: "介词",
-  連詞: "连词",
-  助詞: "助词",
-  語氣詞: "语气词",
-  感嘆詞: "感叹词",
-  數詞: "数词",
-  量詞: "量词",
-  冠詞: "冠词",
-};
-
-function enrichedWithWiktionary(token, result) {
-  const lexicon = compactLexiconRecord(result);
-  if (!lexicon) return token;
-  const externalPos = result.entries?.[0]?.partOfSpeech || "";
-  const normalizedPos = wiktionaryPartOfSpeech[externalPos.toLocaleLowerCase()]
-    || wiktionaryPartOfSpeech[externalPos]
-    || externalPos;
-  const definition = wiktionaryDefinitions(result, 1)[0];
-  const pendingGloss = /^(?:等待模型|等待词典|等待 Wiktionary|待补充|待析)/u.test(token.gloss || "");
-  const wiktionarySource = `Wiktionary · ${lexicon.sourceLanguage}`;
-  const baseSource = token.source || "本地词法";
-  const sourceWithWiktionary = baseSource.includes(wiktionarySource)
-    ? baseSource
-    : `${baseSource} · ${wiktionarySource}`;
-  return {
-    ...token,
-    pos: token.pos === "待识别" && normalizedPos ? normalizedPos : token.pos,
-    gloss: pendingGloss && definition ? definition : token.gloss,
-    confidence: token.confidence <= 48 ? 70 : token.confidence,
-    source: token.source?.startsWith("人工校订")
-      ? `人工校订 · ${wiktionarySource}`
-      : sourceWithWiktionary,
-    lexicon: {
-      ...lexicon,
-      localSource: token.lexicon?.localSource || token.source,
-      selectedCandidate: token.lexicon?.selectedCandidate || null,
-    },
-  };
 }
 
 function dependencyFromRole(token, isRoot = false) {
@@ -1482,12 +1345,28 @@ function ModelSettingsDialog({
   config,
   errors,
   testState,
+  activeTab = "model",
+  lexiconSources = [],
+  lexiconSecrets = {},
+  lexiconErrors = {},
+  lexiconTestState = {},
   onChange,
   onClose,
   onSave,
   onTest,
+  onTabChange,
+  onLexiconChange,
+  onLexiconSecretChange,
+  onAddLexicon,
+  onRemoveLexicon,
+  onMoveLexicon,
+  onSaveLexicons,
+  onTestLexicon,
 }) {
   const [showSecret, setShowSecret] = useState(false);
+  const [testTerm, setTestTerm] = useState("hello");
+  const [testLanguage, setTestLanguage] = useState("en");
+  const [visibleLexiconSecrets, setVisibleLexiconSecrets] = useState({});
   const statusLabel = testState.status === "testing"
     ? "正在验证终点与密钥…"
     : testState.status === "ok"
@@ -1497,6 +1376,7 @@ function ModelSettingsDialog({
       : testState.status === "error"
         ? testState.message
         : "尚未测试当前设置";
+  const isModelTab = activeTab === "model";
 
   return (
     <div className="settings-backdrop" onMouseDown={(event) => {
@@ -1505,77 +1385,241 @@ function ModelSettingsDialog({
       <section className="model-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="model-settings-title">
         <header>
           <div>
-            <span className="eyebrow">Model connection</span>
-            <h2 id="model-settings-title">模型设置</h2>
+            <span className="eyebrow">{isModelTab ? "Model connection" : "Lexicon services"}</span>
+            <h2 id="model-settings-title">{isModelTab ? "模型设置" : "在线词典与发音"}</h2>
           </div>
-          <button onClick={onClose} aria-label="关闭模型设置"><Icon name="close" /></button>
+          <button onClick={onClose} aria-label={isModelTab ? "关闭模型设置" : "关闭在线词典设置"}><Icon name="close" /></button>
         </header>
 
-        <div className="model-settings-form">
-          <label>
-            <span>接口类型</span>
-            <select value={config.provider} onChange={(event) => onChange({ ...config, provider: event.target.value })}>
-              <option value="openai-compatible">OpenAI 兼容接口</option>
-            </select>
-          </label>
-          <label>
-            <span>模型终点</span>
-            <input
-              value={config.endpoint}
-              onChange={(event) => onChange({ ...config, endpoint: event.target.value })}
-              placeholder="https://api.openai.com/v1"
-              aria-invalid={errors.endpoint ? "true" : "false"}
-              autoCapitalize="off"
-              spellCheck="false"
-            />
-            {errors.endpoint && <small>{errors.endpoint}</small>}
-          </label>
-          <label>
-            <span>模型 ID</span>
-            <input
-              value={config.model}
-              onChange={(event) => onChange({ ...config, model: event.target.value })}
-              placeholder="gpt-5.6-sol"
-              aria-invalid={errors.model ? "true" : "false"}
-              autoCapitalize="off"
-              spellCheck="false"
-            />
-            {errors.model && <small>{errors.model}</small>}
-          </label>
-          <label>
-            <span>API 密钥</span>
-            <div className="model-secret-field">
-              <input
-                type={showSecret ? "text" : "password"}
-                value={config.apiKey}
-                onChange={(event) => onChange({ ...config, apiKey: event.target.value })}
-                placeholder="仅当前浏览器会话"
-                aria-invalid={errors.apiKey ? "true" : "false"}
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck="false"
-              />
-              <button type="button" onClick={() => setShowSecret((current) => !current)}>
-                {showSecret ? "隐藏" : "显示"}
-              </button>
-            </div>
-            {errors.apiKey && <small>{errors.apiKey}</small>}
-          </label>
+        <div className="settings-tabs" role="tablist" aria-label="服务设置栏目">
+          <button role="tab" aria-selected={isModelTab} className={isModelTab ? "active" : ""} onClick={() => onTabChange("model")}>
+            模型
+          </button>
+          <button role="tab" aria-selected={!isModelTab} className={!isModelTab ? "active" : ""} onClick={() => onTabChange("lexicon")}>
+            在线词典与发音
+          </button>
         </div>
 
-        <p className="model-privacy-note">
-          终点与模型 ID 保存在本设备；密钥只保留在当前浏览器会话。点击测试或启动识别前，不会向模型终点发送请求。
-        </p>
-        <div className={`model-test-status ${testState.status}`} role="status">
-          <i aria-hidden="true" />
-          <span>{statusLabel}</span>
-        </div>
+        {isModelTab ? (
+          <>
+            <div className="model-settings-form">
+              <label>
+                <span>接口类型</span>
+                <select value={config.provider} onChange={(event) => onChange({ ...config, provider: event.target.value })}>
+                  <option value="openai-compatible">OpenAI 兼容接口</option>
+                </select>
+              </label>
+              <label>
+                <span>模型终点</span>
+                <input
+                  value={config.endpoint}
+                  onChange={(event) => onChange({ ...config, endpoint: event.target.value })}
+                  placeholder="https://api.openai.com/v1"
+                  aria-invalid={errors.endpoint ? "true" : "false"}
+                  autoCapitalize="off"
+                  spellCheck="false"
+                />
+                {errors.endpoint && <small>{errors.endpoint}</small>}
+              </label>
+              <label>
+                <span>模型 ID</span>
+                <input
+                  value={config.model}
+                  onChange={(event) => onChange({ ...config, model: event.target.value })}
+                  placeholder="gpt-5.6-sol"
+                  aria-invalid={errors.model ? "true" : "false"}
+                  autoCapitalize="off"
+                  spellCheck="false"
+                />
+                {errors.model && <small>{errors.model}</small>}
+              </label>
+              <label>
+                <span>API 密钥</span>
+                <div className="model-secret-field">
+                  <input
+                    type={showSecret ? "text" : "password"}
+                    value={config.apiKey}
+                    onChange={(event) => onChange({ ...config, apiKey: event.target.value })}
+                    placeholder="仅当前浏览器会话"
+                    aria-invalid={errors.apiKey ? "true" : "false"}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck="false"
+                  />
+                  <button type="button" onClick={() => setShowSecret((current) => !current)}>
+                    {showSecret ? "隐藏" : "显示"}
+                  </button>
+                </div>
+                {errors.apiKey && <small>{errors.apiKey}</small>}
+              </label>
+            </div>
+
+            <p className="model-privacy-note">
+              终点与模型 ID 保存在本设备；密钥只保留在当前浏览器会话。点击测试或启动识别前，不会向模型终点发送请求。
+            </p>
+            <div className={`model-test-status ${testState.status}`} role="status">
+              <i aria-hidden="true" />
+              <span>{statusLabel}</span>
+            </div>
+          </>
+        ) : (
+          <div className="lexicon-settings-form">
+            <p className="lexicon-settings-intro">
+              按下列顺序查询并合并词义、IPA 与录音。地址可使用 <code>{"{term}"}</code>、<code>{"{lemma}"}</code>、<code>{"{language}"}</code> 和 <code>{"{code}"}</code>。
+            </p>
+            <div className="lexicon-test-sample">
+              <label>
+                <span>测试词</span>
+                <input value={testTerm} onChange={(event) => setTestTerm(event.target.value)} aria-label="在线词典测试词" />
+              </label>
+              <label>
+                <span>语言代码</span>
+                <input value={testLanguage} onChange={(event) => setTestLanguage(event.target.value)} aria-label="在线词典测试语言代码" />
+              </label>
+            </div>
+            <div className="lexicon-source-list">
+              {lexiconSources.map((source, index) => {
+                const sourceErrors = lexiconErrors[source.id] || {};
+                const sourceTest = lexiconTestState[source.id] || { status: "idle" };
+                const isBuiltIn = source.kind === "wiktionary";
+                return (
+                  <section className={`lexicon-source-card ${source.enabled ? "" : "disabled"}`} key={source.id}>
+                    <header>
+                      <label className="lexicon-source-toggle">
+                        <input
+                          type="checkbox"
+                          checked={source.enabled}
+                          onChange={(event) => onLexiconChange(source.id, { enabled: event.target.checked })}
+                        />
+                        <span>
+                          <strong>{source.name}</strong>
+                          <small>{isBuiltIn ? "内置开放词典与 Wikimedia 发音" : "自定义 JSON 接口"}</small>
+                        </span>
+                      </label>
+                      <div className="lexicon-source-actions">
+                        <button onClick={() => onMoveLexicon(source.id, -1)} disabled={index === 0} aria-label={`上移${source.name}`}>↑</button>
+                        <button onClick={() => onMoveLexicon(source.id, 1)} disabled={index === lexiconSources.length - 1} aria-label={`下移${source.name}`}>↓</button>
+                        {!isBuiltIn && <button onClick={() => onRemoveLexicon(source.id)} aria-label={`移除${source.name}`}>移除</button>}
+                      </div>
+                    </header>
+                    {!isBuiltIn && (
+                      <div className="lexicon-source-fields">
+                        <label>
+                          <span>词典名称</span>
+                          <input
+                            value={source.name}
+                            onChange={(event) => onLexiconChange(source.id, { name: event.target.value })}
+                            aria-label={`${source.name}词典名称`}
+                            aria-invalid={sourceErrors.name ? "true" : "false"}
+                          />
+                          {sourceErrors.name && <small>{sourceErrors.name}</small>}
+                        </label>
+                        <label>
+                          <span>适用语言</span>
+                          <input
+                            value={source.languages}
+                            onChange={(event) => onLexiconChange(source.id, { languages: event.target.value })}
+                            placeholder="* 或 la, grc, ja"
+                            aria-label={`${source.name}适用语言`}
+                          />
+                        </label>
+                        <label className="lexicon-endpoint-field">
+                          <span>查询地址</span>
+                          <input
+                            value={source.endpoint}
+                            onChange={(event) => onLexiconChange(source.id, { endpoint: event.target.value })}
+                            placeholder="https://dict.example/lookup?term={term}&lang={code}"
+                            aria-label={`${source.name}查询地址`}
+                            aria-invalid={sourceErrors.endpoint ? "true" : "false"}
+                            autoCapitalize="off"
+                            spellCheck="false"
+                          />
+                          {sourceErrors.endpoint && <small>{sourceErrors.endpoint}</small>}
+                        </label>
+                        <label>
+                          <span>密钥方式</span>
+                          <select
+                            value={source.authMode}
+                            onChange={(event) => onLexiconChange(source.id, { authMode: event.target.value })}
+                            aria-label={`${source.name}密钥方式`}
+                          >
+                            <option value="none">不需要密钥</option>
+                            <option value="bearer">Bearer 密钥</option>
+                            <option value="header">自定义请求头</option>
+                            <option value="query">查询参数</option>
+                          </select>
+                        </label>
+                        {source.authMode !== "none" && (
+                          <>
+                            {["header", "query"].includes(source.authMode) && (
+                              <label>
+                                <span>{source.authMode === "header" ? "请求头名称" : "参数名称"}</span>
+                                <input
+                                  value={source.authHeader}
+                                  onChange={(event) => onLexiconChange(source.id, { authHeader: event.target.value })}
+                                  aria-label={`${source.name}密钥名称`}
+                                />
+                              </label>
+                            )}
+                            <label className="lexicon-secret-field">
+                              <span>接口密钥</span>
+                              <div className="model-secret-field">
+                                <input
+                                  type={visibleLexiconSecrets[source.id] ? "text" : "password"}
+                                  value={lexiconSecrets[source.id] || ""}
+                                  onChange={(event) => onLexiconSecretChange(source.id, event.target.value)}
+                                  placeholder="仅当前浏览器会话"
+                                  aria-label={`${source.name}接口密钥`}
+                                  autoComplete="off"
+                                />
+                                <button type="button" onClick={() => setVisibleLexiconSecrets((current) => ({
+                                  ...current,
+                                  [source.id]: !current[source.id],
+                                }))}>
+                                  {visibleLexiconSecrets[source.id] ? "隐藏" : "显示"}
+                                </button>
+                              </div>
+                            </label>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {!isBuiltIn && (
+                      <div className={`lexicon-source-test ${sourceTest.status}`} role="status">
+                        <span>
+                          {sourceTest.status === "testing" && "正在查询测试词…"}
+                          {sourceTest.status === "ok" && `连接通过 · ${sourceTest.definitionCount} 条释义 · ${sourceTest.pronunciationCount} 条发音`}
+                          {sourceTest.status === "not_found" && "接口可用，但没有找到测试词"}
+                          {sourceTest.status === "error" && sourceTest.message}
+                          {sourceTest.status === "idle" && "支持常见 definitions、gloss、ipa、audio 字段"}
+                        </span>
+                        <button
+                          onClick={() => onTestLexicon(source.id, { term: testTerm, code: testLanguage })}
+                          disabled={sourceTest.status === "testing"}
+                        >
+                          测试接口
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+            <button className="lexicon-add-source" onClick={onAddLexicon}>＋ 添加在线词典</button>
+            <p className="model-privacy-note">
+              地址与启用顺序保存在本设备并随本地数据库导出；接口密钥只保留在当前浏览器会话。词典返回的音频链接会显示为可播放的发音来源。
+            </p>
+          </div>
+        )}
+
         <footer>
           <button onClick={onClose}>取消</button>
-          <button onClick={onSave}>保存设置</button>
-          <button className="primary-action" onClick={onTest} disabled={testState.status === "testing"}>
-            {testState.status === "testing" ? "测试中…" : "测试连接"}
-          </button>
+          <button onClick={isModelTab ? onSave : onSaveLexicons}>保存设置</button>
+          {isModelTab && (
+            <button className="primary-action" onClick={onTest} disabled={testState.status === "testing"}>
+              {testState.status === "testing" ? "测试中…" : "测试连接"}
+            </button>
+          )}
         </footer>
       </section>
     </div>
@@ -1589,6 +1633,7 @@ function LanguageWorkspace({
   onOpenLab,
   modelConnection,
   onOpenModelSettings,
+  onOpenLexiconSettings,
 }) {
   const [tab, setTab] = useState("initialize");
   const [step, setStep] = useState(1);
@@ -2996,10 +3041,10 @@ function LanguageWorkspace({
             </p>
             <div className="pronunciation-source-strip">
               <span>
-                <strong>世界发音</strong>
-                <small>阅读器已自动查询 Wiktionary IPA、Wikimedia Commons 与 Lingua Libre 录音</small>
+                <strong>在线词典与发音</strong>
+                <small>词义、IPA 与录音会显示在阅读器的词项详情中</small>
               </span>
-              <a href="https://api.forvo.com/documentation/" target="_blank" rel="noreferrer">Forvo · 可选密钥源</a>
+              <button onClick={onOpenLexiconSettings}>配置接口</button>
               <a href="/sources">来源与许可</a>
             </div>
           </div>
@@ -3585,6 +3630,8 @@ function AnalysisLab({
   analysisRulePacks = [],
   corpora = [],
   modelConfig = {},
+  lexiconSources = [builtInLexiconSource],
+  lexiconSecrets = {},
 }) {
   const initialTokens = initialDraft?.tokens?.length
     ? withSyntaxLinks(initialDraft.tokens.map((token) => ({ ...token })))
@@ -3592,6 +3639,13 @@ function AnalysisLab({
   const initialLexiconCount = initialTokens.filter((token) => token.lexicon).length;
   const [languageId, setLanguageId] = useState(initialDraft?.languageId || "greek");
   const activeLanguageProfile = languageProfiles.find((profile) => profile.id === languageId) || null;
+  const hasCustomLexiconSources = normalizeLexiconSources(lexiconSources)
+    .some((source) => (
+      source.enabled
+      && source.kind === "custom"
+      && sourceSupportsLanguage(source, languageId, activeLanguageProfile?.code || "")
+    ));
+  const onlineLexiconLabel = hasCustomLexiconSources ? "在线词典" : "Wiktionary";
   const activePipeline = enabledAnalysisEngines(
     analysisPipelines?.[languageId],
     activeLanguageProfile,
@@ -3618,14 +3672,16 @@ function AnalysisLab({
   const importRef = useRef(null);
   const analysisRequestRef = useRef(null);
   const initialRunRef = useRef(false);
-  const activeLexicon = useWiktionaryLookup(
+  const activeLexicon = useLexiconLookup(
     activeToken,
     languageId,
     lexiconPhase.status !== "loading",
     activeLanguageProfile,
+    lexiconSources,
+    lexiconSecrets,
   );
-  const activeLexiconDefinitions = wiktionaryDefinitions(activeLexicon, 2);
-  const activeLexiconCandidates = wiktionaryMorphologyCandidates(activeLexicon);
+  const activeLexiconDefinitions = lexiconDefinitions(activeLexicon, 2);
+  const activeLexiconCandidates = lexiconMorphologyCandidates(activeLexicon);
   const activeParadigm = activeLexicon.paradigms?.[0] || null;
   const activeFixedExpressions = [
     ...(activeLexicon.fixedExpressions || []),
@@ -3643,7 +3699,7 @@ function AnalysisLab({
     const alreadyCurrent = activeToken?.lexicon?.sourceUrl === lexicon?.sourceUrl
       && (activeToken?.lexicon?.detailsLoaded || !lexicon?.detailsLoaded);
     if (!activeToken || !lexicon || alreadyCurrent) return;
-    const enrichedToken = enrichedWithWiktionary(activeToken, activeLexicon);
+    const enrichedToken = enrichTokenWithLexicon(activeToken, activeLexicon);
     setTokens((current) => current.map((token) => token.id === activeToken.id ? enrichedToken : token));
     setActiveToken(enrichedToken);
   }, [activeLexicon, activeToken]);
@@ -3655,7 +3711,7 @@ function AnalysisLab({
     const patch = {
       [field]: value,
       source: activeToken.lexicon
-        ? `人工校订 · Wiktionary · ${activeToken.lexicon.sourceLanguage}`
+        ? `人工校订 · ${lexiconSourceLabel(activeToken.lexicon)}`
         : "人工校订 · 本地词法",
     };
     if (field === "morphology") {
@@ -3681,7 +3737,7 @@ function AnalysisLab({
       lgrTags: normalizedCandidate.tags,
       lgrIssues: normalizedCandidate.unregistered,
       confidence: Math.max(activeToken.confidence || 0, 82),
-      source: `人工校订 · Wiktionary · ${lexicon?.sourceLanguage || "词形候选"}`,
+      source: `人工校订 · ${lexiconSourceLabel(lexicon, "词形候选")}`,
       lexicon: lexicon ? {
         ...lexicon,
         localSource: lexicon.localSource || activeToken.source,
@@ -3699,7 +3755,7 @@ function AnalysisLab({
       ...activeToken,
       headId,
       source: activeToken.lexicon
-        ? `人工校订 · Wiktionary · ${activeToken.lexicon.sourceLanguage}`
+        ? `人工校订 · ${lexiconSourceLabel(activeToken.lexicon)}`
         : "人工校订 · 本地词法",
     };
     setTokens((current) => current.map((token) => token.id === activeToken.id ? nextToken : token));
@@ -4005,33 +4061,21 @@ function AnalysisLab({
     }
 
     try {
-      const results = [];
-      for (let start = 0; start < lookupTokens.length; start += 24) {
-        const response = await fetch("/api/lexicon", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            language: resolvedLanguage,
-            code: resolvedProfile?.code || "",
-            items: lookupTokens.slice(start, start + 24).map((token) => ({
-              id: token.id,
-              term: token.form,
-              lemma: token.lemma,
-            })),
-          }),
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error(`Lexicon batch failed with ${response.status}`);
-        const payload = await response.json();
-        results.push(...(payload.results || []));
-      }
+      const results = await requestLexiconBatch(
+        lexiconSources,
+        lexiconSecrets,
+        resolvedLanguage,
+        resolvedProfile,
+        lookupTokens,
+        controller.signal,
+      );
       const resultById = new Map(results.map((result) => [result.id, result]));
       const found = results.filter((result) => result.status === "ok").length;
       setTokens((current) => current.map((token) => (
-        enrichedWithWiktionary(token, resultById.get(token.id))
+        enrichTokenWithLexicon(token, resultById.get(token.id))
       )));
       setActiveToken((current) => current
-        ? enrichedWithWiktionary(current, resultById.get(current.id))
+        ? enrichTokenWithLexicon(current, resultById.get(current.id))
         : current);
       setLexiconPhase({
         status: "done",
@@ -4370,7 +4414,7 @@ function AnalysisLab({
           <span>
             {text.length} 个字符 · LGR
             {languageId === "chinese" && " · 空格/| 定界"}
-            {phase === "done" && !activeLanguageProfile && " · 词法 Wiktionary 优先 · 句法 本地规则"}
+            {phase === "done" && !activeLanguageProfile && ` · 词法 ${onlineLexiconLabel} 优先 · 句法 本地规则`}
             {phase === "done" && activeLanguageProfile && (
               ({
                 "local-corpus": ` · 本地 UD 语料命中 · 初始化词表 ${activeLanguageProfile.lexicon.length}`,
@@ -4383,9 +4427,9 @@ function AnalysisLab({
             {phase === "done" && analysisBackend.status === "fallback" && " · 无可用句法模型，仅显示分词与词法"}
             {phase === "done" && analysisBackend.preprocessingChanges > 0 && ` · DSL 预处理 ${analysisBackend.preprocessingChanges}`}
             {phase === "done" && analysisBackend.dslChanges > 0 && ` · DSL 修正 ${analysisBackend.dslChanges} 词项`}
-            {lexiconPhase.status === "loading" && " · Wiktionary 查询中"}
-            {lexiconPhase.status === "done" && ` · Wiktionary ${lexiconPhase.found}/${lexiconPhase.total}`}
-            {lexiconPhase.status === "unavailable" && " · Wiktionary 离线回退"}
+            {lexiconPhase.status === "loading" && ` · ${onlineLexiconLabel} 查询中`}
+            {lexiconPhase.status === "done" && ` · ${onlineLexiconLabel} ${lexiconPhase.found}/${lexiconPhase.total}`}
+            {lexiconPhase.status === "unavailable" && ` · ${onlineLexiconLabel} 离线回退`}
             {lexiconPhase.status === "profile" && ` · 词表匹配 ${lexiconPhase.found}/${lexiconPhase.total}`}
           </span>
           <small className="lab-pipeline-summary">
@@ -4588,12 +4632,12 @@ function AnalysisLab({
                   <div><dt>来源</dt><dd>{activeToken.source}</dd></div>
                 </dl>
                 <div className="lexicon-inline" aria-live="polite">
-                  {activeLexicon.status === "loading" && <span>正在查询 Wiktionary…</span>}
+                  {activeLexicon.status === "loading" && <span>正在查询{onlineLexiconLabel}…</span>}
                   {activeLexicon.status === "ok" && (
                     <>
-                      <a href={activeLexicon.sourceUrl} target="_blank" rel="noreferrer">
-                        Wiktionary · {activeLexicon.sourceLanguage}
-                      </a>
+                      {activeLexicon.sourceUrl
+                        ? <a href={activeLexicon.sourceUrl} target="_blank" rel="noreferrer">{lexiconSourceLabel(activeLexicon)}</a>
+                        : <span>{lexiconSourceLabel(activeLexicon)}</span>}
                       <span>{activeLexicon.entries.map((entry) => entry.partOfSpeech).filter((value, index, values) => values.indexOf(value) === index).join(" / ")}</span>
                       {activeLexiconDefinitions.length > 0 && <p>{activeLexiconDefinitions.join("；")}</p>}
                       {activeLexiconCandidates.length > 0 && (
@@ -4619,10 +4663,10 @@ function AnalysisLab({
                     </>
                   )}
                   {["not_found", "unavailable"].includes(activeLexicon.status) && (
-                    <span>Wiktionary 暂无可用义项 · 使用本地标注</span>
+                    <span>{onlineLexiconLabel}暂无可用义项 · 使用本地标注</span>
                   )}
                   {activeLexicon.status === "not_configured" && (
-                    <span>该语言尚未配置 Wiktionary 映射 · 使用初始化词表</span>
+                    <span>该语言尚未配置可用词典 · 使用初始化词表</span>
                   )}
                 </div>
                 {activeParadigm && (
@@ -4744,6 +4788,13 @@ export default function ReaderPage() {
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [modelErrors, setModelErrors] = useState({});
   const [modelTestState, setModelTestState] = useState({ status: "idle" });
+  const [settingsTab, setSettingsTab] = useState("model");
+  const [lexiconSources, setLexiconSources] = useState(() => normalizeLexiconSources());
+  const [lexiconDraft, setLexiconDraft] = useState(() => normalizeLexiconSources());
+  const [lexiconSecrets, setLexiconSecrets] = useState({});
+  const [lexiconDraftSecrets, setLexiconDraftSecrets] = useState({});
+  const [lexiconErrors, setLexiconErrors] = useState({});
+  const [lexiconTestState, setLexiconTestState] = useState({});
   const [hydrated, setHydrated] = useState(false);
   const searchRef = useRef(null);
 
@@ -4814,14 +4865,16 @@ export default function ReaderPage() {
   const selectedBookmarkKey = `${languageId}:${selectedToken?.id}`;
   const isBookmarked = bookmarks.some((item) => item.key === selectedBookmarkKey);
   const selectedLanguageProfile = languageWorkspace.profiles.find((profile) => profile.id === languageId);
-  const selectedLexicon = useWiktionaryLookup(
+  const selectedLexicon = useLexiconLookup(
     selectedToken,
     languageId,
     true,
     selectedLanguageProfile,
+    lexiconSources,
+    lexiconSecrets,
   );
-  const selectedLexiconDefinitions = wiktionaryDefinitions(selectedLexicon, 3);
-  const selectedLexiconCandidates = wiktionaryMorphologyCandidates(selectedLexicon);
+  const selectedLexiconDefinitions = lexiconDefinitions(selectedLexicon, 3);
+  const selectedLexiconCandidates = lexiconMorphologyCandidates(selectedLexicon);
   const selectedPronunciations = selectedLexicon.pronunciations || [];
   const selectedIpa = selectedLexicon.ipa || [];
   const selectedLgr = selectedToken ? leipzigRecord(selectedToken) : { tags: [] };
@@ -4948,6 +5001,21 @@ export default function ReaderPage() {
       });
       setModelConfig(restoredModelConfig);
       setModelDraft(restoredModelConfig);
+      const restoredLexiconSources = normalizeLexiconSources(JSON.parse(
+        window.localStorage.getItem(LEXICON_CONFIG_STORAGE_KEY) || "[]",
+      ));
+      let restoredLexiconSecrets = {};
+      try {
+        restoredLexiconSecrets = JSON.parse(
+          window.sessionStorage.getItem(LEXICON_SECRET_SESSION_KEY) || "{}",
+        );
+      } catch {
+        restoredLexiconSecrets = {};
+      }
+      setLexiconSources(restoredLexiconSources);
+      setLexiconDraft(restoredLexiconSources);
+      setLexiconSecrets(restoredLexiconSecrets);
+      setLexiconDraftSecrets(restoredLexiconSecrets);
       setHydrated(true);
       if (sharedTarget && sharedTarget.status !== "ok") {
         const message = {
@@ -5263,8 +5331,20 @@ export default function ReaderPage() {
   };
 
   const openModelSettings = () => {
+    setSettingsTab("model");
     setModelDraft(modelConfig);
     setModelErrors({});
+    setLexiconDraft(lexiconSources);
+    setLexiconDraftSecrets(lexiconSecrets);
+    setModelSettingsOpen(true);
+  };
+
+  const openLexiconSettings = () => {
+    setSettingsTab("lexicon");
+    setLexiconDraft(lexiconSources);
+    setLexiconDraftSecrets(lexiconSecrets);
+    setLexiconErrors({});
+    setLexiconTestState({});
     setModelSettingsOpen(true);
   };
 
@@ -5296,6 +5376,122 @@ export default function ReaderPage() {
     setModelTestState({ status: "idle" });
     setModelSettingsOpen(false);
     showToast(saved.apiKey ? "模型设置已保存，密钥仅限当前会话" : "模型终点已保存，尚未设置会话密钥");
+  };
+
+  const updateLexiconDraft = (sourceId, patch) => {
+    setLexiconDraft((current) => current.map((source) => (
+      source.id === sourceId ? { ...source, ...patch } : source
+    )));
+    setLexiconErrors((current) => ({ ...current, [sourceId]: {} }));
+    setLexiconTestState((current) => ({ ...current, [sourceId]: { status: "idle" } }));
+  };
+
+  const updateLexiconDraftSecret = (sourceId, value) => {
+    setLexiconDraftSecrets((current) => ({ ...current, [sourceId]: value }));
+    setLexiconTestState((current) => ({ ...current, [sourceId]: { status: "idle" } }));
+  };
+
+  const addLexiconSource = () => {
+    setLexiconDraft((current) => [
+      ...current,
+      freshCustomLexiconSource(current.filter((source) => source.kind === "custom").length + 1),
+    ]);
+  };
+
+  const removeLexiconSource = (sourceId) => {
+    setLexiconDraft((current) => current.filter((source) => source.id !== sourceId));
+    setLexiconDraftSecrets((current) => {
+      const next = { ...current };
+      delete next[sourceId];
+      return next;
+    });
+  };
+
+  const moveLexiconSource = (sourceId, direction) => {
+    setLexiconDraft((current) => {
+      const index = current.findIndex((source) => source.id === sourceId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const validateLexiconDraft = () => {
+    const errors = Object.fromEntries(
+      lexiconDraft
+        .filter((source) => source.kind === "custom")
+        .map((source) => [source.id, validateLexiconSource(source)])
+        .filter(([, sourceErrors]) => Object.keys(sourceErrors).length),
+    );
+    setLexiconErrors(errors);
+    return errors;
+  };
+
+  const saveLexiconSettings = () => {
+    const errors = validateLexiconDraft();
+    if (Object.keys(errors).length) {
+      showToast(Object.values(errors)[0] && Object.values(Object.values(errors)[0])[0]);
+      return;
+    }
+    const normalized = normalizeLexiconSources(lexiconDraft);
+    window.localStorage.setItem(
+      LEXICON_CONFIG_STORAGE_KEY,
+      JSON.stringify(persistentLexiconSources(normalized)),
+    );
+    window.sessionStorage.setItem(
+      LEXICON_SECRET_SESSION_KEY,
+      JSON.stringify(lexiconDraftSecrets),
+    );
+    setLexiconSources(normalized);
+    setLexiconDraft(normalized);
+    setLexiconSecrets(lexiconDraftSecrets);
+    setModelSettingsOpen(false);
+    showToast("在线词典与发音来源已保存");
+  };
+
+  const testLexiconSource = async (sourceId, { term, code }) => {
+    const source = lexiconDraft.find((item) => item.id === sourceId);
+    if (!source) return;
+    const errors = validateLexiconSource(source);
+    if (Object.keys(errors).length) {
+      setLexiconErrors((current) => ({ ...current, [sourceId]: errors }));
+      showToast(Object.values(errors)[0]);
+      return;
+    }
+    setLexiconTestState((current) => ({ ...current, [sourceId]: { status: "testing" } }));
+    try {
+      const response = await fetch("/api/lexicon/custom", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source,
+          apiKey: lexiconDraftSecrets[sourceId] || "",
+          language: code || "",
+          code: code || "",
+          term: term || "hello",
+          lemma: term || "hello",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.status === "unavailable") {
+        throw new Error(payload.message || `接口返回 ${response.status}`);
+      }
+      setLexiconTestState((current) => ({
+        ...current,
+        [sourceId]: {
+          status: payload.status === "ok" ? "ok" : "not_found",
+          definitionCount: lexiconDefinitions(payload, 50).length,
+          pronunciationCount: (payload.pronunciations || []).length + (payload.ipa || []).length,
+        },
+      }));
+    } catch (error) {
+      setLexiconTestState((current) => ({
+        ...current,
+        [sourceId]: { status: "error", message: error?.message || "接口测试失败" },
+      }));
+    }
   };
 
   const testConfiguredModel = async () => {
@@ -5479,7 +5675,7 @@ export default function ReaderPage() {
             className={`top-model-settings ${modelConnection.tested ? "connected" : modelConnection.configured ? "configured" : ""}`}
             onClick={openModelSettings}
             aria-label="模型设置"
-            title={modelConnection.tested ? `${modelConnection.model} 已连接` : "配置模型终点与密钥"}
+            title={modelConnection.tested ? `${modelConnection.model} 已连接 · 配置模型与在线词典` : "配置模型、在线词典与发音"}
           >
             <Icon name="settings" size={17} />
             <i aria-hidden="true" />
@@ -5727,29 +5923,37 @@ export default function ReaderPage() {
                 <button onClick={() => { navigator.clipboard?.writeText(selectedToken.lemma); showToast("词元已复制"); }} aria-label="复制词元"><Icon name="copy" size={15} /></button>
               </div>
 
-              {(selectedIpa.length > 0 || selectedPronunciations.length > 0) && (
-                <div className="pronunciation-row">
-                  <span>发音</span>
-                  <div>
-                    {selectedIpa.length > 0 && <strong>{selectedIpa.join(" · ")}</strong>}
-                    {selectedPronunciations.slice(0, 2).map((item) => (
-                      <span className="pronunciation-audio" key={item.url}>
-                        <audio controls preload="none" src={item.url} aria-label={`${selectedToken.form}的发音`} />
-                        <a href={item.sourceUrl} target="_blank" rel="noreferrer" title={item.file}>
-                          {item.provider}
+              <div className={`pronunciation-row ${selectedIpa.length || selectedPronunciations.length ? "" : "empty"}`}>
+                <span>发音</span>
+                <div>
+                  {selectedIpa.length > 0 && <strong className="pronunciation-ipa">{selectedIpa.join(" · ")}</strong>}
+                  {selectedPronunciations.slice(0, 3).map((item, index) => (
+                    <span className="pronunciation-audio" key={item.url}>
+                      <audio controls preload="none" src={item.url} aria-label={`${selectedToken.form}的发音 ${index + 1}`} />
+                      <span className="pronunciation-provider">{item.provider || "录音来源"}</span>
+                      {item.sourceUrl && (
+                        <a href={item.sourceUrl} target="_blank" rel="noreferrer" title={item.file || item.provider}>
+                          查看来源
                         </a>
-                      </span>
-                    ))}
-                  </div>
+                      )}
+                    </span>
+                  ))}
+                  {selectedIpa.length === 0 && selectedPronunciations.length === 0 && (
+                    <button className="pronunciation-configure" onClick={openLexiconSettings}>
+                      配置发音来源
+                    </button>
+                  )}
                 </div>
-              )}
+              </div>
 
               <section className="analysis-section">
                 <div className="analysis-section-title">
                   <span>词法分析</span>
                   {selectedLexicon.status === "ok"
-                    ? <a className="wiktionary-source-link" href={selectedLexicon.sourceUrl} target="_blank" rel="noreferrer">Wiktionary · {selectedLexicon.sourceLanguage}</a>
-                    : <em>{selectedLexicon.status === "loading" ? "查询 Wiktionary…" : "本地回退"}</em>}
+                    ? selectedLexicon.sourceUrl
+                      ? <a className="wiktionary-source-link" href={selectedLexicon.sourceUrl} target="_blank" rel="noreferrer">{lexiconSourceLabel(selectedLexicon)}</a>
+                      : <em>{lexiconSourceLabel(selectedLexicon)}</em>
+                    : <em>{selectedLexicon.status === "loading" ? "查询在线词典…" : "本地回退"}</em>}
                 </div>
                 <div className="pos-line">
                   <span className="pos-badge">{selectedToken.pos}</span>
@@ -5757,7 +5961,7 @@ export default function ReaderPage() {
                 </div>
                 {selectedLexiconCandidates.length > 0 && (
                   <div className="wiktionary-candidate-list">
-                    <small>Wiktionary 屈折候选</small>
+                    <small>{lexiconSourceLabel(selectedLexicon)} · 屈折候选</small>
                     {selectedLexiconCandidates.map((candidate, index) => (
                       <div key={candidate.lgrTags.join(".")}>
                         <i>{index + 1}</i>
@@ -5778,7 +5982,7 @@ export default function ReaderPage() {
                 <div className="analysis-section-title"><span>词典与语境</span><button onClick={() => showToast("已保留本地语境分析")}><Icon name="spark" size={14} />语境分析</button></div>
                 <p className="definition">{selectedToken.gloss}</p>
                 <div className="wiktionary-senses" aria-live="polite">
-                  {selectedLexicon.status === "loading" && <span>正在查询 Wiktionary 词条…</span>}
+                  {selectedLexicon.status === "loading" && <span>正在查询在线词典…</span>}
                   {selectedLexicon.status === "ok" && (
                     <>
                       <span className="wiktionary-pos">
@@ -5787,11 +5991,18 @@ export default function ReaderPage() {
                       <ol>
                         {selectedLexiconDefinitions.map((definition) => <li key={definition}>{definition}</li>)}
                       </ol>
+                      {selectedLexicon.sources?.length > 1 && (
+                        <div className="lexicon-result-sources" aria-label="词典结果来源">
+                          {selectedLexicon.sources.map((source) => source.sourceUrl ? (
+                            <a key={source.id} href={source.sourceUrl} target="_blank" rel="noreferrer">{source.name}</a>
+                          ) : <span key={source.id}>{source.name}</span>)}
+                        </div>
+                      )}
                     </>
                   )}
-                  {selectedLexicon.status === "not_found" && <span>Wiktionary 暂无对应义项，显示本地释义。</span>}
-                  {selectedLexicon.status === "unavailable" && <span>Wiktionary 暂时不可用，显示本地释义。</span>}
-                  {selectedLexicon.status === "not_configured" && <span>该语言尚未配置 Wiktionary 映射，显示初始化词表。</span>}
+                  {selectedLexicon.status === "not_found" && <span>在线词典暂无对应义项，显示本地释义。</span>}
+                  {selectedLexicon.status === "unavailable" && <span>在线词典暂时不可用，显示本地释义。</span>}
+                  {selectedLexicon.status === "not_configured" && <span>该语言尚未配置可用词典，显示初始化词表。</span>}
                 </div>
                 <div className="context-note"><Icon name="spark" size={16} /><p>在本句中充当<strong>{selectedToken.role}</strong>，{selectedToken.relation}。</p></div>
               </section>
@@ -5802,7 +6013,7 @@ export default function ReaderPage() {
                 <p className="muted-note">
                   {selectedLexicon.status === "not_configured"
                     ? "当前使用语言初始化词表；词形特征与句中功能保留本地校订结果。"
-                    : "词典义项以 Wiktionary 为主；词形特征与句中功能保留本地校订结果。"}
+                    : `词典义项来自 ${lexiconSourceLabel(selectedLexicon)}；词形特征与句中功能保留本地校订结果。`}
                 </p>
               </section>
             </div>
@@ -5874,16 +6085,16 @@ export default function ReaderPage() {
                   <tr>
                     <th scope="row">来源</th>
                     <td>
-                      {selectedLexicon.status === "loading" && "正在查询 Wiktionary…"}
+                      {selectedLexicon.status === "loading" && "正在查询在线词典…"}
                       {selectedLexicon.status === "ok" && (
-                        <a className="wiktionary-source-link" href={selectedLexicon.sourceUrl} target="_blank" rel="noreferrer">
-                          Wiktionary · {selectedLexicon.sourceLanguage}
-                        </a>
+                        selectedLexicon.sourceUrl
+                          ? <a className="wiktionary-source-link" href={selectedLexicon.sourceUrl} target="_blank" rel="noreferrer">{lexiconSourceLabel(selectedLexicon)}</a>
+                          : lexiconSourceLabel(selectedLexicon)
                       )}
                       {["not_found", "unavailable"].includes(selectedLexicon.status) && (
                         selectedImportedLexicon
                           ? `${selectedImportedLexicon.sourceTitle || "扫描词典"}${selectedImportedLexicon.page ? ` · 第 ${selectedImportedLexicon.page} 页` : ""}`
-                          : "Wiktionary 无可用结果 · 本地校订"
+                          : "在线词典无可用结果 · 本地校订"
                       )}
                       {selectedLexicon.status === "not_configured" && (
                         selectedImportedLexicon
@@ -5896,7 +6107,7 @@ export default function ReaderPage() {
               </table>
 
               {selectedLexiconCandidates.length > 0 && (
-                <table className="grammar-analysis-table grammar-candidate-table" aria-label="Wiktionary 词形候选">
+                <table className="grammar-analysis-table grammar-candidate-table" aria-label="在线词典词形候选">
                   <thead>
                     <tr><th>候选</th><th>标签</th></tr>
                   </thead>
@@ -6025,6 +6236,8 @@ export default function ReaderPage() {
           analysisRulePacks={languageWorkspace.analysisRulePacks}
           corpora={languageWorkspace.corpora}
           modelConfig={modelConfig}
+          lexiconSources={lexiconSources}
+          lexiconSecrets={lexiconSecrets}
         />
       ) : (
         <LanguageWorkspace
@@ -6034,6 +6247,7 @@ export default function ReaderPage() {
           onOpenLab={openLanguageProfileInLab}
           modelConnection={modelConnection}
           onOpenModelSettings={openModelSettings}
+          onOpenLexiconSettings={openLexiconSettings}
         />
       )}
 
@@ -6042,6 +6256,11 @@ export default function ReaderPage() {
           config={modelDraft}
           errors={modelErrors}
           testState={modelTestState}
+          activeTab={settingsTab}
+          lexiconSources={lexiconDraft}
+          lexiconSecrets={lexiconDraftSecrets}
+          lexiconErrors={lexiconErrors}
+          lexiconTestState={lexiconTestState}
           onChange={(next) => {
             setModelDraft(next);
             setModelErrors({});
@@ -6050,6 +6269,14 @@ export default function ReaderPage() {
           onClose={() => setModelSettingsOpen(false)}
           onSave={saveModelSettings}
           onTest={testConfiguredModel}
+          onTabChange={setSettingsTab}
+          onLexiconChange={updateLexiconDraft}
+          onLexiconSecretChange={updateLexiconDraftSecret}
+          onAddLexicon={addLexiconSource}
+          onRemoveLexicon={removeLexiconSource}
+          onMoveLexicon={moveLexiconSource}
+          onSaveLexicons={saveLexiconSettings}
+          onTestLexicon={testLexiconSource}
         />
       )}
 
@@ -6139,16 +6366,16 @@ export default function ReaderPage() {
           <div className="mobile-tags">{selectedToken.morphology.map((item) => <i key={item}>{item}</i>)}</div>
           <h3>语境释义</h3><p>{selectedToken.gloss}</p>
           <div className="wiktionary-senses mobile-wiktionary" aria-live="polite">
-            {selectedLexicon.status === "loading" && <span>正在查询 Wiktionary…</span>}
+            {selectedLexicon.status === "loading" && <span>正在查询在线词典…</span>}
             {selectedLexicon.status === "ok" && (
               <>
-                <a className="wiktionary-source-link" href={selectedLexicon.sourceUrl} target="_blank" rel="noreferrer">
-                  Wiktionary · {selectedLexicon.sourceLanguage}
-                </a>
+                {selectedLexicon.sourceUrl
+                  ? <a className="wiktionary-source-link" href={selectedLexicon.sourceUrl} target="_blank" rel="noreferrer">{lexiconSourceLabel(selectedLexicon)}</a>
+                  : <span>{lexiconSourceLabel(selectedLexicon)}</span>}
                 {selectedLexiconDefinitions[0] && <p>{selectedLexiconDefinitions[0]}</p>}
               </>
             )}
-            {["not_found", "unavailable"].includes(selectedLexicon.status) && <span>Wiktionary 无可用结果 · 本地释义</span>}
+            {["not_found", "unavailable"].includes(selectedLexicon.status) && <span>在线词典无可用结果 · 本地释义</span>}
             {selectedLexicon.status === "not_configured" && <span>初始化词表 · 本地释义</span>}
           </div>
           <div className="context-note"><Icon name="spark" size={16} /><p>在本句中充当<strong>{selectedToken.role}</strong>，{selectedToken.relation}。</p></div>
