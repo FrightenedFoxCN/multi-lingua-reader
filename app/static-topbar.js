@@ -1,10 +1,12 @@
 import { primaryNavigation } from "./site-config.js";
+import { sitePath } from "./deployment.js";
+import { RepositoryLink } from "./repository-link.js";
 
 export function StaticTopbar({ current }) {
   return (
     <header className="topbar">
       <div className="brand-zone">
-        <a className="brand" href="/">
+        <a className="brand" href={sitePath("/")}>
           <span className="brand-mark">L</span>
           <span className="brand-name">Lingua</span>
           <span className="brand-product">Reader</span>
@@ -22,6 +24,9 @@ export function StaticTopbar({ current }) {
           </a>
         ))}
       </nav>
+      <div className="top-actions">
+        <RepositoryLink />
+      </div>
     </header>
   );
 }

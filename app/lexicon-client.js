@@ -7,6 +7,7 @@ import {
   normalizeLexiconSources,
   sourceSupportsLanguage,
 } from "./lexicon-config.js";
+import { serverApiPath } from "./deployment.js";
 
 const partOfSpeechLabels = {
   adjective: "形容词",
@@ -79,12 +80,12 @@ async function requestLexiconSource(source, secret, languageId, code, item, sign
       lemma: item.lemma,
       ...(code ? { code } : {}),
     });
-    const response = await fetch(`/api/lexicon?${parameters}`, { signal });
+    const response = await fetch(serverApiPath(`/api/lexicon?${parameters}`), { signal });
     if (!response.ok) throw new Error(`Lexicon request failed with ${response.status}`);
     return response.json();
   }
 
-  const response = await fetch("/api/lexicon/custom", {
+  const response = await fetch(serverApiPath("/api/lexicon/custom"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -194,7 +195,7 @@ async function requestSourceBatch(source, secret, languageId, code, items, signa
     const collected = [];
     for (let start = 0; start < items.length; start += 24) {
       const response = await fetch(
-        source.kind === "wiktionary" ? "/api/lexicon" : "/api/lexicon/custom",
+        serverApiPath(source.kind === "wiktionary" ? "/api/lexicon" : "/api/lexicon/custom"),
         {
           method: "POST",
           headers: { "content-type": "application/json" },

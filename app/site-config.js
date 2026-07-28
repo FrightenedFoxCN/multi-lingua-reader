@@ -1,12 +1,14 @@
+import { sitePath } from "./deployment.js";
+
 export const PRODUCT_NAME = "Lingua Reader";
 
 export const primaryNavigation = [
-  { id: "reader", label: "阅读器", href: "/", view: "reader" },
-  { id: "library", label: "书库", href: "/?view=library", view: "library" },
-  { id: "lab", label: "分析实验室", href: "/?view=lab", view: "lab" },
-  { id: "languages", label: "语言工作台", href: "/?view=languages", view: "languages" },
-  { id: "docs", label: "使用文档", href: "/docs" },
-  { id: "sources", label: "数据来源", href: "/sources", secondary: true },
+  { id: "reader", label: "阅读器", href: sitePath("/"), view: "reader" },
+  { id: "library", label: "书库", href: sitePath("/?view=library"), view: "library" },
+  { id: "lab", label: "分析实验室", href: sitePath("/?view=lab"), view: "lab" },
+  { id: "languages", label: "语言工作台", href: sitePath("/?view=languages"), view: "languages" },
+  { id: "docs", label: "使用文档", href: sitePath("/docs/") },
+  { id: "sources", label: "数据来源", href: sitePath("/sources/"), secondary: true },
 ];
 
 export const languageWorkspaceTabs = [

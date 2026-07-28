@@ -88,6 +88,8 @@ import {
   languageWorkspaceTabs,
   primaryNavigation,
 } from "./site-config";
+import { serverApiPath, sitePath } from "./deployment";
+import { RepositoryLink } from "./repository-link";
 
 const paths = {
   library: <><path d="M4 4.5h6.5v15H4zM13.5 4.5H20v15h-6.5z"/><path d="M7.25 8h0M16.75 8h0"/></>,
@@ -1819,7 +1821,7 @@ function LanguageWorkspace({
     setResourcePhase({ status: "loading", code });
     try {
       const response = await fetch(
-        `/api/languages/resolve?code=${encodeURIComponent(code)}&name=${encodeURIComponent(draft.name)}`,
+        serverApiPath(`/api/languages/resolve?code=${encodeURIComponent(code)}&name=${encodeURIComponent(draft.name)}`),
       );
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "数据库目录无法读取");
@@ -1885,7 +1887,7 @@ function LanguageWorkspace({
     });
     try {
       const response = await fetch(
-        `/api/languages/wiktionary?code=${encodeURIComponent(code)}&limit=24`,
+        serverApiPath(`/api/languages/wiktionary?code=${encodeURIComponent(code)}&limit=24`),
         { signal: controller.signal },
       );
       const result = await response.json();
@@ -1948,7 +1950,7 @@ function LanguageWorkspace({
     });
     try {
       const response = await fetch(
-        `/api/languages/grammar?glottocode=${encodeURIComponent(glottocode)}`,
+        serverApiPath(`/api/languages/grammar?glottocode=${encodeURIComponent(glottocode)}`),
         { signal: controller.signal },
       );
       const result = await response.json();
@@ -2792,7 +2794,7 @@ function LanguageWorkspace({
                 </div>
                 <p className="resource-selection-note">
                   保存的是版本、授权和来源清单，不会在浏览器中直接下载大型数据。
-                  <a href="/sources">查看全部数据库与致谢</a>
+                  <a href={sitePath("/sources/")}>查看全部数据库与致谢</a>
                 </p>
               </div>
             )}
@@ -3045,7 +3047,7 @@ function LanguageWorkspace({
                 <small>词义、IPA 与录音会显示在阅读器的词项详情中</small>
               </span>
               <button onClick={onOpenLexiconSettings}>配置接口</button>
-              <a href="/sources">来源与许可</a>
+              <a href={sitePath("/sources/")}>来源与许可</a>
             </div>
           </div>
 
@@ -3947,7 +3949,7 @@ function AnalysisLab({
           && context.languageCode
           && !context.languageCode.toLocaleLowerCase().startsWith("x-")
         ) {
-          const response = await fetch("/api/analyze", {
+          const response = await fetch(serverApiPath("/api/analyze"), {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
@@ -3966,7 +3968,7 @@ function AnalysisLab({
           && modelConfig.model
           && modelConfig.apiKey
         ) {
-          const response = await fetch("/api/analyze/model", {
+          const response = await fetch(serverApiPath("/api/analyze/model"), {
             method: "POST",
             headers: {
               authorization: `Bearer ${modelConfig.apiKey}`,
@@ -5462,7 +5464,7 @@ export default function ReaderPage() {
     }
     setLexiconTestState((current) => ({ ...current, [sourceId]: { status: "testing" } }));
     try {
-      const response = await fetch("/api/lexicon/custom", {
+      const response = await fetch(serverApiPath("/api/lexicon/custom"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -5680,6 +5682,7 @@ export default function ReaderPage() {
             <Icon name="settings" size={17} />
             <i aria-hidden="true" />
           </button>
+          <RepositoryLink />
           <button className="avatar" onClick={() => showToast("当前为原型访客会话")}>游</button>
         </div>
       </header>

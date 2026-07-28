@@ -13,10 +13,9 @@ test("keeps primary routes, documentation anchors, and workspace tabs unique", (
   assert.equal(unique(primaryNavigation.map((item) => item.href)), true);
   assert.equal(unique(languageWorkspaceTabs.map((item) => item.id)), true);
   assert.equal(unique(documentationSections.map((item) => item.id)), true);
-  assert.ok(primaryNavigation.some((item) => item.id === "docs" && item.href === "/docs"));
+  assert.ok(primaryNavigation.some((item) => item.id === "docs" && item.href === "/docs/"));
   assert.deepEqual(
     languageWorkspaceTabs.map((item) => item.id),
     ["initialize", "dictionaries", "analysis", "pdf", "grammar", "database"],
   );
 });
-

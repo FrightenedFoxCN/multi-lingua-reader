@@ -209,6 +209,26 @@ textarea:focus-visible {
   background: #79a982;
 }
 
+.top-repository-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--header-muted);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-decoration: none;
+}
+
+.top-repository-link:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+}
+
 .search-trigger {
   width: 260px;
   height: 34px;
@@ -6104,6 +6124,16 @@ kbd {
 
   .top-model-settings {
     width: 30px;
+  }
+
+  .top-repository-link {
+    width: 30px;
+    padding: 0;
+    border-color: transparent;
+  }
+
+  .top-repository-link span {
+    display: none;
   }
 
   .search-trigger {

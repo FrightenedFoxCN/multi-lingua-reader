@@ -8,6 +8,9 @@ import {
   languageWorkspaceTabs,
 } from "../site-config.js";
 import { StaticTopbar } from "../static-topbar.js";
+import { sitePath } from "../deployment.js";
+
+export const dynamic = "force-static";
 
 export const metadata = {
   title: "使用文档 · Lingua Reader",
@@ -62,7 +65,7 @@ export default function DocumentationPage() {
                 </a>
               ))}
             </nav>
-            <p>涉及第三方资源的版本、授权与署名，请同时查看<a href="/sources">数据来源与致谢</a>。</p>
+            <p>涉及第三方资源的版本、授权与署名，请同时查看<a href={sitePath("/sources/")}>数据来源与致谢</a>。</p>
           </aside>
 
           <article className="docs-content">
@@ -262,6 +265,7 @@ export default function DocumentationPage() {
                 <div><dt>DSL 不执行</dt><dd>先看编辑器的行号诊断，再检查 <code>language</code>、<code>replace</code> 字段范围、字段内容、优先级和较早规则的 <code>stop</code>。</dd></div>
                 <div><dt>转写被错误替换</dt><dd>停用对应规则包并为该数据源单建一包；不要仅凭语言混用多个转写体系。已导入语料仍保留当时快照和原值，可审计后重新导入。</dd></div>
                 <div><dt>不显示语法树</dt><dd>这是没有可验证句法证据时的预期行为；导入 UD/CTS、启用 UDPipe 或模型后再分析。</dd></div>
+                <div><dt>在线演示的接口不可用</dt><dd>GitHub Pages 版本是静态演示，可使用阅读、内置文本、本地分词、导入和浏览器数据库；语言数据库自动初始化、Wiktionary、UDPipe、自定义词典代理与模型代理需要在本地运行完整版本。</dd></div>
                 <div><dt>大型数据</dt><dd>申请浏览器持久存储并定期导出 <code>.linguadb</code>；大语料按批写入，但备份仍需要足够的本地磁盘空间。</dd></div>
               </dl>
             </section>

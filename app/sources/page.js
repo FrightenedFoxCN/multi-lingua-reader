@@ -1,6 +1,8 @@
 import { languageDataSources } from "../language-resources.js";
 import { StaticTopbar } from "../static-topbar.js";
 
+export const dynamic = "force-static";
+
 const groupedSources = languageDataSources.reduce((groups, source) => {
   const values = groups.get(source.category) || [];
   values.push(source);
