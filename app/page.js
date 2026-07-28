@@ -90,6 +90,16 @@ import {
 } from "./site-config";
 import { serverApiPath, sitePath } from "./deployment";
 import { RepositoryLink } from "./repository-link";
+import {
+  createVocabularyRecord,
+  exportVocabularyCsv,
+  findVocabularyTarget,
+  mergeVocabularyRecords,
+  normalizeVocabularyRecords,
+  parseVocabularyCsv,
+  relatedVocabularyItems,
+  vocabularyRecordKey,
+} from "./vocabulary-book";
 
 const paths = {
   library: <><path d="M4 4.5h6.5v15H4zM13.5 4.5H20v15h-6.5z"/><path d="M7.25 8h0M16.75 8h0"/></>,
@@ -1150,7 +1160,7 @@ function LibraryView({
         </div>
         <div className="library-summary">
           <div><strong>{availableWorks.length}</strong><span>部作品</span></div>
-          <div><strong>{bookmarks.length}</strong><span>个收藏词</span></div>
+          <div><strong>{bookmarks.length}</strong><span>个生词</span></div>
           <div><strong>{notes.length}</strong><span>条本地笔记</span></div>
         </div>
       </header>
@@ -4771,6 +4781,7 @@ export default function ReaderPage() {
   const [noteText, setNoteText] = useState("");
   const [notes, setNotes] = useState([]);
   const [bookmarks, setBookmarks] = useState([]);
+  const [wordQuery, setWordQuery] = useState("");
   const [analysisPassage, setAnalysisPassage] = useState(null);
   const [analysisDraft, setAnalysisDraft] = useState(null);
   const [languageWorkspace, setLanguageWorkspace] = useState({
@@ -4864,7 +4875,11 @@ export default function ReaderPage() {
       ? selectedToken.ctsTarget
       : ctsTokenTarget(currentPassageUrn, currentLine.tokens, selectedTokenIndex)
     : "";
-  const selectedBookmarkKey = `${languageId}:${selectedToken?.id}`;
+  const selectedBookmarkKey = vocabularyRecordKey({
+    languageId,
+    form: selectedToken?.form,
+    lemma: selectedToken?.lemma,
+  });
   const isBookmarked = bookmarks.some((item) => item.key === selectedBookmarkKey);
   const selectedLanguageProfile = languageWorkspace.profiles.find((profile) => profile.id === languageId);
   const selectedLexicon = useLexiconLookup(
@@ -4887,6 +4902,10 @@ export default function ReaderPage() {
     selectedLanguageProfile || { lexicon: languageWorkspace.lexicons?.[languageId] || [] },
     selectedToken?.form,
   );
+  const selectedLanguageMetadata = builtInWorkspaceLanguages.find((item) => item.id === languageId)
+    || selectedLanguageProfile
+    || { id: languageId, code: work.lang, name: work.language };
+  const selectedRelatedWords = relatedVocabularyItems(allTokens, selectedToken);
   const modelConnection = {
     configured: Boolean(modelConfig.endpoint && modelConfig.model && modelConfig.apiKey),
     tested: modelTestState.status === "ok" && modelTestState.modelAvailable !== false,
@@ -4923,7 +4942,7 @@ export default function ReaderPage() {
       if (typeof saved.segmented === "boolean") setSegmented(saved.segmented);
       if (typeof saved.translation === "boolean") setTranslation(saved.translation);
       if (Array.isArray(saved.notes)) setNotes(saved.notes);
-      if (Array.isArray(saved.bookmarks)) setBookmarks(saved.bookmarks);
+      if (Array.isArray(saved.bookmarks)) setBookmarks(normalizeVocabularyRecords(saved.bookmarks));
       if (!sharedUrn && ["reader", "library", "lab", "languages"].includes(requestedView)) {
         setView(requestedView);
       }
@@ -5541,33 +5560,117 @@ export default function ReaderPage() {
       showToast(`已取消收藏“${selectedToken.form}”`);
       return;
     }
-    setBookmarks([{
-      key: selectedBookmarkKey,
+    const record = createVocabularyRecord({
       languageId,
+      languageCode: selectedLanguageMetadata.code,
+      languageName: selectedLanguageMetadata.name || work.language,
       tokenId: selectedToken.id,
       form: selectedToken.form,
       lemma: selectedToken.lemma,
+      partOfSpeech: selectedToken.pos,
+      meaning: selectedLexiconDefinitions[0]
+        || selectedImportedLexicon?.gloss
+        || selectedToken.gloss,
+      reading: selectedIpa[0] || selectedToken.reading,
+      morphology: selectedToken.morphology,
       work: work.title,
       passage: currentLine.n,
-    }, ...bookmarks]);
+      ctsUrn: selectedTokenCtsTarget,
+      sourceUrl: selectedLexicon.sourceUrl || selectedImportedLexicon?.sourceUrl || "",
+    });
+    setBookmarks([record, ...bookmarks.filter((item) => item.key !== record.key)]);
     showToast(`已收藏“${selectedToken.form}”`);
   };
 
   const openBookmark = (item) => {
-    const nextWork = library[item.languageId]
-      || (analysisPassage?.languageId === item.languageId ? work : null);
+    const resolvedLanguageId = library[item.languageId]
+      ? item.languageId
+      : builtInWorkspaceLanguages.find((language) => language.code === item.languageCode)?.id
+        || item.languageId;
+    const nextWork = library[resolvedLanguageId]
+      || (analysisPassage?.languageId === resolvedLanguageId ? work : null);
     if (!nextWork) {
       showToast("该收藏所对应的临时语料已不在当前会话");
       return;
     }
-    const lineIndex = nextWork.lines.findIndex((line) => line.tokens.some((token) => token.id === item.tokenId));
-    if (library[item.languageId]) setAnalysisPassage(null);
-    setLanguageId(item.languageId);
-    setSelectedTokenId(item.tokenId);
-    setSelectedLineIndex(Math.max(0, lineIndex));
-    setPassageIndex(Math.max(0, Math.floor(Math.max(0, lineIndex) / (nextWork.lines.length > 4 ? 3 : 2))));
+    const nextTokens = nextWork.lines.flatMap((line, lineIndex) => (
+      line.tokens.map((token) => ({ ...token, lineIndex }))
+    ));
+    const target = nextTokens.find((token) => token.id === item.tokenId)
+      || findVocabularyTarget(nextTokens, item.lemma || item.form);
+    if (!target) {
+      showToast(`已导入“${item.form}”，但当前书库中没有可跳转词位`);
+      return;
+    }
+    if (library[resolvedLanguageId]) setAnalysisPassage(null);
+    setLanguageId(resolvedLanguageId);
+    setSelectedTokenId(target.id);
+    setSelectedLineIndex(target.lineIndex);
+    setPassageIndex(Math.floor(target.lineIndex / (nextWork.lines.length > 4 ? 3 : 2)));
     setTab("word");
     setView("reader");
+  };
+
+  const jumpToVocabularyToken = (target) => {
+    if (!target) return;
+    setSelectedTokenId(target.id);
+    setSelectedLineIndex(target.lineIndex);
+    setPassageIndex(Math.floor(target.lineIndex / passageSize));
+    setTab("word");
+    requestAnimationFrame(() => document.querySelector(".reader-main")?.scrollTo({ top: 0, behavior: "smooth" }));
+  };
+
+  const submitWordQuery = (event) => {
+    event.preventDefault();
+    const target = findVocabularyTarget(allTokens, wordQuery);
+    if (!target) {
+      showToast(`当前作品中未找到“${wordQuery.trim()}”`);
+      return;
+    }
+    jumpToVocabularyToken(target);
+    setWordQuery("");
+    showToast(`已跳转到“${target.form}”`);
+  };
+
+  const exportVocabularyBook = () => {
+    if (!bookmarks.length) {
+      showToast("生词本为空，暂无可导出记录");
+      return;
+    }
+    const blob = new Blob([`\uFEFF${exportVocabularyCsv(bookmarks)}`], {
+      type: "text/csv;charset=utf-8",
+    });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `lingua-vocabulary-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    showToast(`已导出 ${bookmarks.length} 条生词记录`);
+  };
+
+  const importVocabularyBook = async (event) => {
+    const [file] = event.target.files || [];
+    event.target.value = "";
+    if (!file) return;
+    if (!String(file.name || "").toLocaleLowerCase().endsWith(".csv")) {
+      showToast("请选择 CSV 生词本文件");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("CSV 生词本不能超过 5 MB");
+      return;
+    }
+    try {
+      const parsed = parseVocabularyCsv(await file.text());
+      const merged = mergeVocabularyRecords(bookmarks, parsed.records);
+      setBookmarks(merged.records);
+      const ignored = parsed.invalidRows.length;
+      showToast(
+        `已导入 ${merged.added} 条，更新 ${merged.updated} 条${ignored ? `，跳过 ${ignored} 条无效记录` : ""}`,
+      );
+    } catch (error) {
+      showToast(error?.message || "无法导入 CSV 生词本");
+    }
   };
 
   const navigatePassage = (nextIndex) => {
@@ -5893,7 +5996,7 @@ export default function ReaderPage() {
             <button className={tab === "syntax" ? "active" : ""} onClick={() => setTab("syntax")}>句法</button>
             <button className={tab === "grammar" ? "active" : ""} onClick={() => setTab("grammar")}>语法</button>
             <button className={tab === "notes" ? "active" : ""} onClick={() => setTab("notes")}>笔记{notes.length > 0 && <i>{notes.length}</i>}</button>
-            <button className={tab === "saved" ? "active" : ""} onClick={() => setTab("saved")}>收藏{bookmarks.length > 0 && <i>{bookmarks.length}</i>}</button>
+            <button className={tab === "saved" ? "active" : ""} onClick={() => setTab("saved")}>生词本{bookmarks.length > 0 && <i>{bookmarks.length}</i>}</button>
             <button className="close-mobile" onClick={() => setMobilePanel(null)} aria-label="关闭"><Icon name="close" size={18} /></button>
           </div>
 
@@ -6006,6 +6109,43 @@ export default function ReaderPage() {
                   {selectedLexicon.status === "not_found" && <span>在线词典暂无对应义项，显示本地释义。</span>}
                   {selectedLexicon.status === "unavailable" && <span>在线词典暂时不可用，显示本地释义。</span>}
                   {selectedLexicon.status === "not_configured" && <span>该语言尚未配置可用词典，显示初始化词表。</span>}
+                </div>
+                <div className="related-vocabulary">
+                  <div className="related-vocabulary-heading">
+                    <span>相关词汇</span>
+                    <small>同词元与相近词法</small>
+                  </div>
+                  {selectedRelatedWords.length > 0 ? (
+                    <div className="related-vocabulary-list">
+                      {selectedRelatedWords.map((item) => (
+                        <button
+                          type="button"
+                          key={item.id}
+                          onClick={() => jumpToVocabularyToken(item)}
+                          aria-label={`查看相关词汇 ${item.form}`}
+                          title={`${item.lemma} · ${item.reason}`}
+                        >
+                          <strong>{item.form}</strong>
+                          <span>{item.reason}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : <p>当前作品中没有可关联的词形。</p>}
+                  <form className="vocabulary-query" onSubmit={submitWordQuery}>
+                    <label htmlFor="reader-word-query">查询跳转</label>
+                    <div>
+                      <input
+                        id="reader-word-query"
+                        value={wordQuery}
+                        onChange={(event) => setWordQuery(event.target.value)}
+                        placeholder="输入词形或词元…"
+                        aria-label="在当前文本查询词形或词元"
+                      />
+                      <button type="submit" disabled={!wordQuery.trim()}>
+                        <Icon name="search" size={13} />跳转
+                      </button>
+                    </div>
+                  </form>
                 </div>
                 <div className="context-note"><Icon name="spark" size={16} /><p>在本句中充当<strong>{selectedToken.role}</strong>，{selectedToken.relation}。</p></div>
               </section>
@@ -6179,18 +6319,37 @@ export default function ReaderPage() {
           {tab === "saved" && (
             <div className="analysis-scroll saved-pane">
               <div className="notes-head">
-                <span className="analysis-label">设备本地收藏</span>
-                <h2>收藏词语</h2>
-                <p>点击收藏项可返回对应文本位置。</p>
+                <span className="analysis-label">设备本地 · CSV 可迁移</span>
+                <h2>生词本</h2>
+                <p>收藏词义快照；导入时按语言、词元和词形合并。</p>
+              </div>
+              <div className="vocabulary-book-actions">
+                <button type="button" onClick={exportVocabularyBook} disabled={!bookmarks.length}>
+                  <Icon name="download" size={14} />导出 CSV
+                </button>
+                <label>
+                  <Icon name="upload" size={14} />导入 CSV
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={(event) => void importVocabularyBook(event)}
+                    aria-label="导入 CSV 生词本"
+                  />
+                </label>
+                <span>{bookmarks.length} 条</span>
               </div>
               {bookmarks.length === 0 ? (
-                <div className="empty-notes"><Icon name="bookmark" size={24} /><p>还没有收藏词语</p><span>在词法面板中点击书签图标即可收藏。</span></div>
+                <div className="empty-notes"><Icon name="bookmark" size={24} /><p>生词本还是空的</p><span>在词义面板点击书签，或导入 CSV 生词本。</span></div>
               ) : (
                 <div className="bookmark-list">
                   {bookmarks.map((item) => (
                     <div className="bookmark-item" key={item.key}>
                       <button onClick={() => openBookmark(item)}>
-                        <strong>{item.form}</strong><span>{item.lemma}</span><small>{item.work} · {item.passage}</small>
+                        <strong>{item.form}</strong>
+                        <span>{item.lemma}</span>
+                        <em>{item.partOfSpeech || item.languageName || item.languageCode || item.languageId}</em>
+                        <p>{item.meaning || "尚无释义"}</p>
+                        <small>{[item.work, item.passage].filter(Boolean).join(" · ") || "CSV 导入词条"}</small>
                       </button>
                       <button onClick={() => setBookmarks(bookmarks.filter((bookmark) => bookmark.key !== item.key))} aria-label={`删除收藏${item.form}`}><Icon name="close" size={14} /></button>
                     </div>

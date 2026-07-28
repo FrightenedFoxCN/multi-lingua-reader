@@ -92,6 +92,8 @@ export default function DocumentationPage() {
                 <div><dt>CTS 定位</dt><dd>分享链接包含段落 URN 与词位，例如 <code>urn:cts:…:1.1@form[1]</code>。</dd></div>
                 <div><dt>分析本段</dt><dd>把可见段落、CTS URN 与现有标注带入分析实验室，校订后可返回阅读器。</dd></div>
                 <div><dt>在线词典与发音</dt><dd>在右上角设置中添加查询地址、适用语言与密钥方式，并用测试词确认结果。多个来源按顺序合并；IPA、录音播放器和来源入口直接显示在词项详情中。</dd></div>
+                <div><dt>生词本与 CSV</dt><dd>词义面板的书签会保存词形、词元、词性、释义、词法、作品与 CTS 定位。生词本支持 CSV 批量导入和导出，重复词条按语言、词元与词形合并。</dd></div>
+                <div><dt>相关词与跳转</dt><dd>词义下方会列出当前作品中同词元或词法相近的词形；点击即可查看。也可以输入词形或词元，在当前文本中查询并跳转。</dd></div>
               </dl>
               <p className="docs-note">查询地址支持 <code>{"{term}"}</code>、<code>{"{lemma}"}</code>、<code>{"{language}"}</code> 与 <code>{"{code}"}</code>。常见的 <code>definitions</code>、<code>gloss</code>、<code>ipa</code>、<code>phonetics</code>、<code>audio</code> 字段会自动整理；地址与顺序随本地数据库导出，接口密钥只保留在当前浏览器会话。</p>
 

@@ -597,7 +597,7 @@ test("library, passages, bookmarks, and Leipzig analysis are functional", async 
   await page.reload();
   await expect(page.locator(".app-shell")).toHaveAttribute("data-hydrated", "true");
   await expect(page.getByLabel("第 4 行")).toBeVisible();
-  await page.locator(".analysis-tabs").getByRole("button", { name: /收藏/ }).click();
+  await page.locator(".analysis-tabs").getByRole("button", { name: /生词本/ }).click();
   await expect(page.locator(".bookmark-list")).toContainText("ἄειδε");
 
   await page.getByRole("button", { name: "书库", exact: true }).click();
@@ -639,6 +639,69 @@ test("library, passages, bookmarks, and Leipzig analysis are functional", async 
   await page.getByRole("button", { name: "完成校订" }).click();
   await expect(page.locator(".token-summary-line")).toContainText("经人工校订的愤怒");
   await expect(page.locator(".lab-inspector dl")).toContainText("人工校订");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("vocabulary book supports related-word jumps and CSV round trips", async ({ page }) => {
+  const consoleErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockWiktionary(page);
+  await page.goto("/");
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-hydrated", "true");
+
+  const repositoryLink = page.getByRole("link", { name: "在 GitHub 打开项目仓库" });
+  await expect(repositoryLink).toHaveAttribute("href", "https://github.com/FrightenedFoxCN/multi-lingua-reader");
+  await expect(repositoryLink).toHaveAttribute("target", "_blank");
+
+  await page.getByRole("button", { name: "ἄειδε" }).click();
+  await expect(page.locator(".wiktionary-senses")).toContainText("to sing");
+  await expect(page.locator(".related-vocabulary-list button")).not.toHaveCount(0);
+  await page.locator(".related-vocabulary-list button").first().click();
+  await expect(page.locator(".word-hero h2")).not.toHaveText("ἄειδε");
+
+  await page.getByLabel("在当前文本查询词形或词元").fill("ἀείδω");
+  await page.getByRole("button", { name: "跳转", exact: true }).click();
+  await expect(page.locator(".word-hero h2")).toHaveText("ἄειδε");
+  await page.getByLabel("收藏词语").click();
+
+  await page.locator(".analysis-tabs").getByRole("button", { name: /生词本/ }).click();
+  await expect(page.locator(".bookmark-list")).toContainText("to sing");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出 CSV" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^lingua-vocabulary-\d{4}-\d{2}-\d{2}\.csv$/u);
+  const exportedCsv = await readFile(await download.path(), "utf8");
+  expect(exportedCsv).toContain("language_id");
+  expect(exportedCsv).toContain("ἄειδε");
+  expect(exportedCsv).toContain("to sing, chant, praise");
+  expect(exportedCsv).toContain("urn:cts:greekLit:");
+
+  await page.getByLabel("删除收藏ἄειδε").click();
+  await expect(page.locator(".bookmark-list")).toHaveCount(0);
+
+  const importedCsv = [
+    "语言代码,语言名称,词形,词元,词性,释义,词法,作品,段落,CTS URN",
+    "grc,古希腊语,θεὰ,θεά,名词,女神,阴性 · 单数 · 呼格,Ἰλιάς,1,urn:cts:greekLit:tlg0012.tlg001.perseus-grc2:1.1@θεὰ[1]",
+    "la,拉丁语,cano,canō,动词,我歌唱,现在时 · 主动 · 第一人称单数,Aeneis,1,urn:cts:latinLit:phi0690.phi003.perseus-lat2:1.1@cano[1]",
+  ].join("\n");
+  await page.getByLabel("导入 CSV 生词本").setInputFiles({
+    name: "vocabulary.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(importedCsv),
+  });
+  await expect(page.locator(".toast")).toContainText("已导入 2 条");
+  await expect(page.locator(".vocabulary-book-actions")).toContainText("2 条");
+  await expect(page.locator(".bookmark-list")).toContainText("θεὰ");
+  await expect(page.locator(".bookmark-list")).toContainText("cano");
+
+  await page.locator(".bookmark-item").filter({ hasText: "cano" }).getByRole("button").first().click();
+  await expect(page.locator(".word-hero h2")).toHaveText("cano");
+  await expect(page.locator(".text-heading h1")).toContainText("Aeneis");
 
   expect(consoleErrors).toEqual([]);
 });
@@ -813,7 +876,7 @@ test("CTS annotation bundles can be exported and imported", async ({ page }) => 
   await page.getByRole("button", { name: /在阅读器中查看当前标注/ }).click();
   await expect(page.locator(".text-heading h1")).toContainText("Ἰλιάς");
   await expect(page.locator(".annotation-layer-status")).toContainText("urn:cts:greekLit:tlg0012.tlg001.perseus-grc2:1.1");
-  await page.getByRole("button", { name: "Πηληϊάδεω" }).click();
+  await page.locator(".original-text .token").filter({ hasText: "Πηληϊάδεω" }).click();
   await expect(page.locator(".word-hero h2")).toHaveText("Πηληϊάδεω");
   await page.locator(".analysis-tabs").getByRole("button", { name: "句法" }).click();
   await expect(page.getByRole("tree", { name: "阅读器依存树" })).toBeVisible();

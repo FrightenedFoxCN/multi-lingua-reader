@@ -1533,6 +1533,114 @@ kbd {
   margin-top: 3px;
 }
 
+.related-vocabulary {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.related-vocabulary-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.related-vocabulary-heading small {
+  color: var(--muted-light);
+  font-size: 8px;
+}
+
+.related-vocabulary-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.related-vocabulary-list button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.related-vocabulary-list button:hover {
+  border-color: var(--accent-soft);
+  color: var(--accent-dark);
+  background: rgba(180, 81, 65, 0.04);
+}
+
+.related-vocabulary-list strong {
+  font-family: var(--serif);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.related-vocabulary-list span {
+  color: var(--muted-light);
+  font-size: 7px;
+}
+
+.related-vocabulary > p {
+  margin: 0;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.vocabulary-query {
+  margin-top: 10px;
+}
+
+.vocabulary-query > label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: .04em;
+}
+
+.vocabulary-query > div {
+  display: flex;
+}
+
+.vocabulary-query input {
+  min-width: 0;
+  height: 30px;
+  flex: 1;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-right: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--serif);
+  font-size: 11px;
+}
+
+.vocabulary-query button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  color: var(--accent-dark);
+  font-size: 9px;
+}
+
+.vocabulary-query button:hover:not(:disabled) {
+  border-color: var(--accent-soft);
+  background: rgba(180, 81, 65, 0.04);
+}
+
+.vocabulary-query button:disabled {
+  color: var(--muted-light);
+}
+
 .wiktionary-pos {
   color: var(--accent-dark);
   font-family: var(--sans);
@@ -2211,18 +2319,65 @@ kbd {
   padding: 0 15px;
 }
 
+.vocabulary-book-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 15px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.vocabulary-book-actions button,
+.vocabulary-book-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 29px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.vocabulary-book-actions button:hover:not(:disabled),
+.vocabulary-book-actions label:hover {
+  border-color: var(--accent-soft);
+  color: var(--accent-dark);
+  background: rgba(180, 81, 65, 0.04);
+}
+
+.vocabulary-book-actions button:disabled {
+  color: var(--muted-light);
+  cursor: default;
+}
+
+.vocabulary-book-actions input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.vocabulary-book-actions > span {
+  margin-left: auto;
+  color: var(--muted-light);
+  font-size: 8px;
+}
+
 .bookmark-item {
   display: grid;
   grid-template-columns: 1fr 26px;
   align-items: center;
-  min-height: 65px;
+  min-height: 82px;
   border-bottom: 1px solid var(--line-soft);
 }
 
 .bookmark-item > button:first-child {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 3px 8px;
   min-width: 0;
   padding: 9px 0;
   text-align: left;
@@ -2236,9 +2391,30 @@ kbd {
 
 .bookmark-item span {
   align-self: end;
+  overflow: hidden;
   color: var(--muted);
   font-family: var(--serif);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark-item em {
+  align-self: end;
+  color: var(--accent-dark);
+  font-size: 7px;
+  font-style: normal;
+}
+
+.bookmark-item p {
+  grid-column: 1 / -1;
+  margin: 1px 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-family: var(--serif);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bookmark-item small {
